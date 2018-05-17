@@ -1,3 +1,6 @@
 [submodule "libraries/Ultrasonic"]
 	path = libraries/Ultrasonic
 	url = https://github.com/filipeflop/Ultrasonic
+[submodule "libraries/DCMotor"]
+	path = libraries/DCMotor
+	url = https://github.com/wesgood/DCMotor
