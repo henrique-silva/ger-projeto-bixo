@@ -5,61 +5,60 @@
 #include <TimerOne.h>
 
 /* Ultrassonic sensor */
-#define TRIGGER_PIN		3
-#define ECHO_PIN		2
+#define TRIGGER_PIN             3
+#define ECHO_PIN                2
 
 /* Reflectance sensor */
-#define NUM_SENSORS		6	// number of sensors used
-#define TIMEOUT			2500	// waits for 2500 microseconds for sensor outputs to go low
-#define EMITTER_PIN		4	// emitter is controlled by digital pin 2
+#define NUM_SENSORS             6       // number of sensors used
+#define TIMEOUT                 2500    // waits for 2500 microseconds for sensor outputs to go low
+#define EMITTER_PIN             A5       // emitter is controlled by digital pin 2
 #define QTR_CENTER_POS          3000
-#define SENSOR_1_PIN            5
-#define SENSOR_2_PIN            6
-#define SENSOR_3_PIN            7
-#define SENSOR_4_PIN            8
-#define SENSOR_5_PIN            9
+#define SENSOR_1_PIN            A0
+#define SENSOR_2_PIN            A1
+#define SENSOR_3_PIN            A2
+#define SENSOR_4_PIN            A3
+#define SENSOR_5_PIN            A4
 
 /* Claw definitions */
-#define CLAW_PIN		10
-#define CLAW_OPEN_ANGLE		0
-#define CLAW_CLOSED_ANGLE	50
+#define CLAW_PIN                12
+#define CLAW_OPEN_ANGLE         0
+#define CLAW_CLOSED_ANGLE       50
 
 /* DC Motors */
-#define MOTOR_RIGHT_SPEED_PIN   1
-#define MOTOR_RIGHT_ENA         1
-#define MOTOR_RIGHT_ENB         1
+#define MOTOR_RIGHT_SPEED_PIN   11
+#define MOTOR_RIGHT_ENA         7
+#define MOTOR_RIGHT_ENB         8
 
-#define MOTOR_LEFT_SPEED_PIN    1
-#define MOTOR_LEFT_ENA          1
-#define MOTOR_LEFT_ENB		1
+#define MOTOR_LEFT_SPEED_PIN    6
+#define MOTOR_LEFT_ENA          5
+#define MOTOR_LEFT_ENB          10
 
-#define MOTOR_MAX_SPEED         200
+#define MOTOR_MAX_SPEED         255
+#define MOTOR_SLOW_SPEED        100
 
 Ultrasonic ultrasonic(TRIGGER_PIN, ECHO_PIN);
-volatile float object_dist;
+volatile float object_dist = 0;
 
-// QTR sensors 0 through 7 are connected to digital pins 3 through 10, respectively
+// QTR reflectance sensors
 QTRSensorsRC qtrrc((unsigned char[]) {SENSOR_1_PIN, SENSOR_2_PIN, SENSOR_3_PIN, SENSOR_4_PIN, SENSOR_5_PIN}, NUM_SENSORS, TIMEOUT, EMITTER_PIN);
-unsigned int sensorValues[NUM_SENSORS];
-static unsigned int line_pos;
 
+/* Variables to hold the reflectance sensors read */
+unsigned int sensorValues[NUM_SENSORS];
+volatile unsigned int line_pos = 0;
+
+/* Claw attached to servo */
 Servo claw;
 
-DCMotor motor_left(MOTOR_RIGHT_ENA, MOTOR_RIGHT_ENB, MOTOR_RIGHT_SPEED_PIN);
-DCMotor motor_right(MOTOR_LEFT_ENA, MOTOR_LEFT_ENB, MOTOR_LEFT_SPEED_PIN);
+/* Motor objects */
+DCMotor motor_left(MOTOR_LEFT_ENA,MOTOR_LEFT_ENB, MOTOR_LEFT_SPEED_PIN);
+DCMotor motor_right(MOTOR_RIGHT_ENA,MOTOR_RIGHT_ENB, MOTOR_RIGHT_SPEED_PIN);
 
 void qtr_calibrate( void )
 {
     Serial.println("Calibrating reflectance sensors...");
 
     for (int i = 0; i < 200; i++) {  // make the calibration take about 5 seconds
-        motor_left.setOutput(MOTOR_MAX_SPEED);
-        motor_right.setOutput(-1 * MOTOR_MAX_SPEED);
-        delay(100);
-
-        motor_left.stop();
-        motor_right.stop();
-
+        delay(15);
         qtrrc.calibrate();       // reads all sensors 10 times at 2500 us per read (i.e. ~25 ms per call)
     }
 
@@ -83,66 +82,94 @@ void setup()
 {
     Serial.begin(9600);
 
+    Serial.println("Starting sensors and motors!");
     /* Initiate claw */
     claw.attach(CLAW_PIN);
     claw.write(CLAW_OPEN_ANGLE);
 
     /* Stop the motors */
-    motor_left.stop();
-    motor_left.setOutput(0);
     motor_right.stop();
-    motor_right.setOutput(0);
+    motor_left.stop();
 
     /* Calibrate reflectance sensors */
     qtr_calibrate();
 }
 
+int left_speed = MOTOR_MAX_SPEED;
+int right_speed = MOTOR_MAX_SPEED;
+
 void loop()
 {
-    /* Read distance from object using the ultrasonic sensor and use average it with the last result */
-    object_dist += ultrasonic.convert(ultrasonic.timing(), Ultrasonic::CM);
-    object_dist = object_dist/2;
-    Serial.println("Object distance: %f", object_dist);
-    
+    /* Read distance from ultrassonic sensor */
+    object_dist = ultrasonic.convert(ultrasonic.timing(), Ultrasonic::CM);
+
+    Serial.print("Object distance: ");
+    Serial.println(object_dist);
+
     /* Read reflectance sensors and get line position estimative (0 - 4000) */
     line_pos = qtrrc.readLine(sensorValues);
-    Serial.println("Line position: %d", line_pos);
+    Serial.print("Line position:");
+    Serial.println(line_pos);
 
-    
-    if (object_dist <= 5.0) {
-        /* Lower motor speed */
-        motor_left.setOutput(MOTOR_MAX_SPEED/2);
-        motor_right.setOutput(MOTOR_MAX_SPEED/2);
+    /* Update motor speed */
+    motor_left.setOutput(left_speed);
+    motor_right.setOutput(right_speed);
 
-        /* Wait until the claw gets closer to the object */
-        while (object_dist > 3.3 );
+#if 0
+    if (object_dist <= 5) {
+
         /* Stop the motor */
+        Serial.println("stopping motors");
         motor_left.stop();
         motor_right.stop();
 
         /* Grab object */
+        Serial.println("grabbing object");
+        delay(1000);
         claw.write(CLAW_CLOSED_ANGLE);
 
         /* Turn around */
-	motor_left.setOutput(MOTOR_MAX_SPEED);
-	motor_right.setOutput(-1 * MOTOR_MAX_SPEED);
-	delay(2500);
+        Serial.println("turning around");
+        motor_left.goForward();
+        motor_right.goBackward();
+        delay(1000);
+
+        motor_left.stop();
+        motor_right.stop();
 
         /* Drop object */
         claw.write(CLAW_OPEN_ANGLE);
 
+        delay(1000);
+        motor_right.goBackward();
+        motor_left.goBackward();
+        delay(1000);
+
+        motor_left.stop();
+        motor_right.stop();
+
         /* Turn back */
-	motor_left.setOutput(-1 * MOTOR_MAX_SPEED);
-	motor_right.setOutput(MOTOR_MAX_SPEED);
-	delay(2500);
+        Serial.println("turning back");
+        motor_left.goBackward();
+        motor_right.goForward();
+        delay(1000);
 
         /* Stop the motor */
         motor_left.stop();
         motor_right.stop();
-
+    }
+#endif
+#if 1
+    if (line_pos < 1500) {
+        right_speed = MOTOR_SLOW_SPEED;
+    }
+    if (line_pos > 2500) {
+        left_speed = MOTOR_SLOW_SPEED;
+    }
+    if (line_pos > 1500 && line_pos < 2700) {
+        left_speed = MOTOR_MAX_SPEED;
+        right_speed = MOTOR_MAX_SPEED;
     }
 
-//    if (line_pos > 2300) {
-//	float rel = (((float)line_pos/(float)QTR_CENTER_POS)-1.0);
-//    }
+#endif
 }
